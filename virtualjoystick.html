@@ -1,0 +1,358 @@
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		
+		<style>
+		body {
+			overflow	: hidden;
+			padding		: 0;
+			margin		: 0;
+			background-color: #BBB;
+		}
+		#infos {
+			position	: absolute;
+			top		: 0px;
+			width		: 100%;
+			padding		: 5px;
+			text-align	: left;
+		}
+		#info a {
+			color		: #66F;
+			text-decoration	: none;
+		}
+		#info a:hover {
+			text-decoration	: underline;
+		}
+		#container {
+			width		: 100%;
+			height		: 100%;
+			overflow	: hidden;
+			padding		: 0;
+			margin		: 0;
+			-webkit-user-select	: none;
+			-moz-user-select	: none;
+		}
+
+		.switch {
+  		position: relative;
+  		display: inline-block;
+		  width: 50px;
+		  height: 34px;
+		}
+
+		.switch input { 
+		  opacity: 0;
+		  width: 0;
+		  height: 0;
+		}
+
+		.slider {
+		  position: absolute;
+		  cursor: pointer;
+		  top: 0;
+		  left: 0;
+		  right: 0;
+		  bottom: 0;
+		  background-color: #ccc;
+		  -webkit-transition: .4s;
+		  transition: .4s;
+		}
+
+		.slider:before {
+		  position: absolute;
+		  content: "";
+		  height: 26px;
+		  width: 26px;
+		  left: 4px;
+		  bottom: 4px;
+		  background-color: white;
+		  -webkit-transition: .4s;
+		  transition: .4s;
+		}
+
+		input:checked + .slider {
+		  background-color: #2196F3;
+		}
+
+		input:focus + .slider {
+		  box-shadow: 0 0 1px #2196F3;
+		}
+
+		input:checked + .slider:before {
+		  -webkit-transform: translateX(16px);
+		  -ms-transform: translateX(16px);
+		  transform: translateX(16px);
+		}
+
+		/* Rounded sliders */
+		.slider.round {
+		  border-radius: 34px;
+		}
+
+		.slider.round:before {
+		  border-radius: 70%;
+		}
+		</style>
+	</head>
+
+	<body>
+		<div id="container"></div>
+		<div id="infos">
+			<span id="mqttstatus"></span>
+			<span id="batterystatus"></span>
+			<br/>
+			<span id="privateip"></span>
+			<br/>
+			<span id="publicip"></span>
+			<br/>
+			<span id="result"></span>
+			<br/>
+			speed
+			<label class="switch" >
+			<input type="checkbox" id="speedcontrol">
+			<span class="slider round"></span>
+			</label>
+			light
+			<label class="switch" >
+			<input type="checkbox" id="light">
+			<span class="slider round"></span>
+			</label>
+			<iframe width="360" height="215" src="http://10.0.1.30:8765/picture/1/frame/"></iframe>
+		</div> 
+
+		<script src="http://jeromeetienne.github.io/virtualjoystick.js/virtualjoystick.js"></script>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.js" type="text/javascript"></script>
+		<script>		
+			<!-- connect to MQTT server -->	
+			console.log("connect to MQTT server");
+			var clientID = "ID-" + Math.round(Math.random() * 1000);
+			var serverIP = "220.233.63.90";
+			var serverport = 9001
+			var client = new Paho.MQTT.Client(serverIP, serverport, clientID);
+      		client.connect({onSuccess:onConnect});
+      		client.onMessageArrived = onMessageArrived
+
+			console.log("touchscreen is", VirtualJoystick.touchScreenAvailable() ? "available" : "not available");
+      		
+      		
+      		<!-- set up joystick object -->
+      		console.log("set up joystick");
+			var joystick	= new VirtualJoystick({
+				container	: document.getElementById('container'),
+				mouseSupport	: true,
+			});
+
+			var lastX = 0;
+			var lastY = 0;
+
+			joystick.addEventListener('touchStart', function(){
+				console.log('down');
+			});
+			joystick.addEventListener('touchEnd', function(){
+				console.log('up');
+			});
+			joystick.addEventListener('mouseup', function(){
+				console.log('mouseup');
+			});
+			joystick.addEventListener('mousedown', function(){
+				console.log('mousedown');
+			});
+
+			// var speedckbox = document.querySelector('input[type="checkbox"]');
+			var speedckbox = document.getElementById('speedcontrol');
+		  	speedckbox.addEventListener('change', function () {
+		    if (speedckbox.checked) {
+		      // do this
+		      console.log('speed unrestricted');
+					var msgspeedcontrol = new Paho.MQTT.Message("1");
+		    } else {
+		      // do that	
+		      console.log('speed restricted');				      
+					var msgspeedcontrol = new Paho.MQTT.Message("0");
+		    }
+		    msgspeedcontrol.destinationName = "rover/speedcontrol";
+			client.send(msgspeedcontrol);	
+		  });
+
+			var lightckbox = document.getElementById('light');
+		  	lightckbox.addEventListener('change', function () {
+		    if (lightckbox.checked) {
+		      	console.log('light on');
+				var msglight = new Paho.MQTT.Message("1");
+		    } else {
+		    	console.log('light off');				      
+				var msglight = new Paho.MQTT.Message("0");
+		    }
+		    msglight.destinationName = "rover/light";
+			client.send(msglight);	
+		  });
+
+			setInterval(function(){
+				var outputEl = document.getElementById('result');
+
+				if ((joystick.up()) && ((lastY != -joystick.deltaY()) || (lastX != joystick.deltaX()))) {
+					<!-- console.log("move"); -->			
+  				var topicX = "rover/deltaX";
+  				var deltaX = String(joystick.deltaX());
+  				console.log("deltaX:" + deltaX);
+  				console.log("lastX:" + lastX);
+  				var messageX = new Paho.MQTT.Message(deltaX);
+  				messageX.destinationName = topicX;
+  				client.send(messageX);	
+
+  				var topicY = "rover/deltaY";
+  				var deltaY = String(-joystick.deltaY());
+  				console.log("deltaY:" + deltaY);
+  				console.log("lastY:" + lastY);
+  				var messageY = new Paho.MQTT.Message(deltaY);
+  				messageY.destinationName = topicY;
+  				client.send(messageY);
+
+				lastX = joystick.deltaX();
+				lastY = joystick.deltaY();
+				}		
+
+				if ((joystick.down()) && ((lastY != -joystick.deltaY()) || (lastX != joystick.deltaX()))) {
+					<!-- console.log("move"); -->			
+  				var topicX = "rover/deltaX";
+  				var deltaX = String(joystick.deltaX());
+  				console.log("deltaX:" + deltaX);
+  				var messageX = new Paho.MQTT.Message(deltaX);
+  				messageX.destinationName = topicX;
+  				client.send(messageX);	
+
+  				var topicY = "rover/deltaY";
+  				var deltaY = String(-joystick.deltaY());
+  				console.log("deltaY:" + deltaY);
+  				var messageY = new Paho.MQTT.Message(deltaY);
+  				messageY.destinationName = topicY;
+  				client.send(messageY);
+
+				lastX = joystick.deltaX();
+				lastY = joystick.deltaY();
+				}	
+				if ((joystick.right()) && ((lastY != -joystick.deltaY()) || (lastX != joystick.deltaX()))) {
+					<!-- console.log("move"); -->			
+  				var topicX = "rover/deltaX";
+  				var deltaX = String(joystick.deltaX());
+  				console.log("deltaX:" + deltaX);
+  				var messageX = new Paho.MQTT.Message(deltaX);
+  				messageX.destinationName = topicX;
+  				client.send(messageX);	
+
+  				var topicY = "rover/deltaY";
+  				var deltaY = String(-joystick.deltaY());
+  				console.log("deltaY:" + deltaY);
+  				var messageY = new Paho.MQTT.Message(deltaY);
+  				messageY.destinationName = topicY;
+  				client.send(messageY);
+
+				lastX = joystick.deltaX();
+				lastY = joystick.deltaY();
+				}	
+				if ((joystick.left()) && ((lastY != -joystick.deltaY()) || (lastX != joystick.deltaX()))) {
+					<!-- console.log("move"); -->			
+  				var topicX = "rover/deltaX";
+  				var deltaX = String(joystick.deltaX());
+  				console.log("deltaX:" + deltaX);
+  				var messageX = new Paho.MQTT.Message(deltaX);
+  				messageX.destinationName = topicX;
+  				client.send(messageX);	
+
+  				var topicY = "rover/deltaY";
+  				var deltaY = String(-joystick.deltaY());
+  				console.log("deltaY:" + deltaY);
+  				var messageY = new Paho.MQTT.Message(deltaY);
+  				messageY.destinationName = topicY;
+  				client.send(messageY);
+
+				lastX = joystick.deltaX();
+				lastY = joystick.deltaY();
+				}
+				if (joystick.deltaX() == 0 && -joystick.deltaY() == 0 && (lastX != 0 && lastY != 0)) {		
+  				var topicX = "rover/deltaX";
+  				var deltaX = 0;
+  				console.log("deltaX:" + deltaX);
+  				var messageX = new Paho.MQTT.Message("0");
+  				messageX.destinationName = topicX;
+  				client.send(messageX);	
+
+  				var topicY = "rover/deltaY";
+  				var deltaY = 0
+  				console.log("deltaY:" + deltaY);
+  				var messageY = new Paho.MQTT.Message("0");
+  				messageY.destinationName = topicY;
+  				client.send(messageY);
+
+				lastX = 0;
+				lastY = 0;
+				}
+				outputEl.innerHTML	= '<b>Result:</b> '
+					+ ' dx:'+joystick.deltaX()
+					+ ' dy:'+joystick.deltaY()
+					+ (joystick.right()	? ' right'	: '')
+					+ (joystick.up()	? ' up'		: '')
+					+ (joystick.left()	? ' left'	: '')
+					+ (joystick.down()	? ' down' 	: '')
+			}, 1/15 * 1000);
+
+			function onConnect() {
+        	console.log("connected to MQTT server: " + serverIP + " @ port " + serverport);				
+        	var outputEl2	= document.getElementById('mqttstatus');
+			outputEl2.innerHTML = 'mqtt server: <span style="color:blue">' + serverIP + ' </span> @ port <span style="color:blue">' + serverport + '</span>';
+  			client.subscribe("rover/voltage");
+  			client.subscribe("rover/privateip");
+  			client.subscribe("rover/publicip");
+  			client.subscribe("rover/light");
+  			console.log("subscribing: " + "rover/voltage");
+  			console.log("subscribing: " + "rover/privateip");
+  			console.log("subscribing: " + "rover/publicip");
+  			console.log("publishing: " + "rover/deltaX");
+  			console.log("publishing: " + "rover/deltaY");
+  			console.log("publishing: " + "rover/speedcontrol")
+  			console.log("publishing: " + "rover/light");
+      }
+
+      	function onMessageArrived(msg) {
+    		console.log("topic: " + msg.destinationName);
+    		console.log("message: " + msg.payloadString);
+
+        if (msg.destinationName == "rover/voltage") {        		
+        	var outputEl2 = document.getElementById('batterystatus');
+			outputEl2.innerHTML = '<span style="color:blue">' + msg.payloadString + ' </span>';
+        };
+        
+        if (msg.destinationName == "rover/publicip") {        		
+        	var outputEl5 = document.getElementById('publicip');
+			outputEl5.innerHTML = 'public ip:  <span style="color:blue">' + msg.payloadString + ' </span>';
+        };
+        
+        if (msg.destinationName == "rover/privateip") {        		
+        	var outputEl6 = document.getElementById('privateip');
+			outputEl6.innerHTML = 'private ip:  <span style="color:blue">' + msg.payloadString + ' </span>';
+        };
+        
+        if (msg.destinationName == "rover/deltaX") {        		
+        	var outputEl3 = document.getElementById('deltaX');
+			outputEl3.innerHTML = 'deltaX: <span style="color:blue">' + msg.payloadString + ' </span>';
+        };
+        
+        if (msg.destinationName == "rover/deltaY") {        		
+        	var outputEl4 = document.getElementById('deltaY');
+			outputEl4.innerHTML = 'deltaY: <span style="color:blue">' + msg.payloadString + ' </span>';
+        };
+
+        if (msg.destinationName == "rover/light") {        		
+        	var lightckbox = document.getElementById('light')
+        	if (msg.payloadString = "0") {
+        		lightckbox.checked = false;
+        	}
+        	else {
+        		lightckbox.checked = true;
+        	}
+        };
+      }
+		</script>
+	</body>
+</html>
