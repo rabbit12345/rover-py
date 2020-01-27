@@ -1,8 +1,18 @@
 #!/usr/bin/python
 # rover control
-# version: 0.8
-# modify date: 18/01/2019
+# version: 0.09
+# modify date: 19/01/2020
 # 
+# 0.9
+# 1. change pwm control using pigpio in checkDirection()
+# http://abyz.me.uk/rpi/pigpio/index.html
+# http://abyz.me.uk/rpi/pigpio/python.html
+# 2. code modified for using BDESC-S10E-RTR module for motor control
+# control see:
+# https://forum.arduino.cc/index.php?topic=642538.0
+# 3. disable ECHO US distance control
+# 4. disable check battery control
+#
 # 0.8
 # 1. adapted for vehicle controlled with stepper motor for direction
 # 2. pi-blaster pwm parameter adjustment: sample_US 5 (default = 10
@@ -49,6 +59,7 @@
 # 2. activate motor from trigger
 #
 import RPi.GPIO as GPIO
+import pigpio
 import paho.mqtt.client as mqtt
 import time
 import datetime
@@ -201,11 +212,21 @@ def on_message(client, obj, msg):
     
 def checkDirection():
   # check deltaX & deltaY + adjust motor controller
+  # in virtual joystic.html
+  # UP = -ve deltaY
+  # DOWN = +ve deltaY
   global deltaX
   global deltaY
   global lastdeltaX
   global lastdeltaY
   reduction = 0.0
+  deltaPWMForward = maxPWM - midPWM
+  deltaPWMReverse = midPWM - minPWM
+  deltaPWM = 0
+
+  # process & reverse deltaY
+  #deltaY = -deltaY
+
   #print maxdelta
   if (abs(deltaX) > maxdeltaX):
     if (deltaX > 0):
@@ -225,49 +246,65 @@ def checkDirection():
   if (deltaX < 0) and (deltaX > -10):
     deltaX = 0
 
+  print("deltaX:" + str(deltaX) + "  deltaY:" + str(deltaY))
   if (deltaX >= 0):
     if (deltaY >= 0):
-      # backward + right
-      print("backward + right")
-      #reduction = deltaY / maxdelta * (1 - (deltaX / maxdelta))
-      #print reduction
-      #reduction = deltaY / maxdelta 
-      #print reduction
-      commands = PiBlasterCmd(LPWM1, abs(deltaX) / maxdeltaX)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM1, 0)
-      commands = commands + ' | ' + PiBlasterCmd(LPWM2, abs(deltaY) / maxdeltaY)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM2, 0)
-    else:
       # forward + right
       print("forward + right")
-      print("NOT stopped by forward ultrasound")
-      commands = PiBlasterCmd(LPWM1, abs(deltaX) / maxdeltaX)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM1, 0)
-      commands = commands + ' | ' + PiBlasterCmd(LPWM2, 0)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM2, abs(deltaY) / maxdeltaY)
+      deltaPWMRight = int((deltaY / maxdeltaY) * deltaPWMForward) - int((deltaX / maxdeltaX) * deltaPWMForward) + midPWM
+      deltaPWMLeft = int((deltaY / maxdeltaY) * deltaPWMForward) + midPWM
+      print "deltaPWMRight " + str(deltaPWMRight)
+      print "deltaPWMLeft " + str(deltaPWMLeft)
+      pi.set_servo_pulsewidth(RPWM1, deltaPWMRight) 
+      pi.set_servo_pulsewidth(LPWM1, deltaPWMLeft)
+    else:
+      # backward + right
+      print("backward + right")
+      deltaPWMRight = midPWM - (int((abs(deltaY) / maxdeltaY) * deltaPWMForward) - int((deltaX / maxdeltaX) * deltaPWMForward))
+      deltaPWMLeft = midPWM - int((abs(deltaY) / maxdeltaY) * deltaPWMForward) 
 
-      #commands = PiBlasterCmd(LPWM1, abs(deltaY) / maxdelta * speedmodifer *  (1 - (deltaX / maxdelta)))
-      #commands = commands + ' | ' + PiBlasterCmd(LPWM2, abs(deltaY) / maxdelta * speedmodifer)
-      
+      print "deltaPWMRight " + str(deltaPWMRight)
+      print "deltaPWMLeft " + str(deltaPWMLeft)
+      reverseESC(lastdeltaY)
+      pi.set_servo_pulsewidth(RPWM1, deltaPWMRight) 
+      pi.set_servo_pulsewidth(LPWM1, deltaPWMLeft)
   else:
     if (deltaY >= 0):
-      # backward + left
-      print("backward + left")
-      commands = PiBlasterCmd(LPWM1, 0)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM1, abs(deltaX) / maxdeltaX)
-      commands = commands + ' | ' + PiBlasterCmd(LPWM2, abs(deltaY) / maxdeltaY)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM2, 0)
-
-    else:
       # forward + left
       print("forward + left")
-      commands = PiBlasterCmd(LPWM1, 0)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM1, abs(deltaX) / maxdeltaX)
-      commands = commands + ' | ' + PiBlasterCmd(LPWM2, 0)
-      commands = commands + ' | ' + PiBlasterCmd(RPWM2, abs(deltaY) / maxdeltaY)
-  #print(commands)
-  os.system(commands)
+      deltaPWMRight = int((deltaY / maxdeltaY) * deltaPWMForward) + midPWM
+      deltaPWMLeft = int((deltaY / maxdeltaY) * deltaPWMForward) - int((deltaX / maxdeltaX) * deltaPWMForward) + midPWM
+      pi.set_servo_pulsewidth(RPWM1, deltaPWMRight) 
+      pi.set_servo_pulsewidth(LPWM1, deltaPWMLeft)
 
+    else:
+      # backward + left
+      print("backward + left")
+      deltaPWMRight = midPWM - int((abs(deltaY) / maxdeltaY) * deltaPWMForward) 
+      deltaPWMLeft = midPWM - int((abs(deltaY) / maxdeltaY) * deltaPWMForward) - int((abs(deltaX) / maxdeltaX) * deltaPWMForward) + midPWM      
+      reverseESC(lastdeltaY)
+      pi.set_servo_pulsewidth(RPWM1, deltaPWMRight)
+      pi.set_servo_pulsewidth(LPWM1, deltaPWMLeft)
+
+  lastdeltaY = deltaY
+  lastdeltaX = deltaX
+
+def reverseESC(lastdeltaY):
+  # control ESC to go into reverse
+  # must set to neutrl than reverse if already going forward
+  # if not already going forward : reverse directly
+  if lastdeltaY > 0:
+    print("neutral then reverse")
+    pi.set_servo_pulsewidth(RPWM1, minPWM)
+    pi.set_servo_pulsewidth(LPWM1, minPWM)
+    #pi.set_servo_pulsewidth(RPWM1, 1500)
+    #pi.set_servo_pulsewidth(LPWM1, 1500)
+    
+    time.sleep(0.2)
+    pi.set_servo_pulsewidth(RPWM1, midPWM)
+    pi.set_servo_pulsewidth(LPWM1, midPWM)
+    time.sleep(0.2)
+  
 def CMD(cmd):
   p = subprocess.Popen(cmd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=False) 
   return (p.stdin, p.stdout, p.stderr) 
@@ -394,6 +431,23 @@ def checkbattery(ADCchannel, GAIN):
     logoutput(msg)
     return stop
 
+def setupESC():
+  # setup BDESC-S10E-RTR Electronic Speed Control
+  # need to input a calibration PWM signal on startup
+  # default to 1500 as midline
+  global pi
+  logoutput("start to calibrate ESC")
+  pi = pigpio.pi()
+  if not pi.connected:
+    return False
+  pi.set_servo_pulsewidth(RPWM1, midPWM)
+  pi.set_servo_pulsewidth(LPWM1, midPWM)
+  time.sleep(1)
+  #pi.set_servo_pulsewidth(RPWM1, 0)
+  #pi.set_servo_pulsewidth(LPWM1, 0)
+  logoutput("ESC calibrated")
+  return True
+
 # device topics
 hostname = socket.gethostname()
 devicename = hostname
@@ -427,15 +481,15 @@ mqttuser = userprefix + devicename
 mqttpass = "wree1234"
 sysloghost = mqttserver
 syslogport = 515
-logfile = "/home/core/pir.log"
+logfile = "/home/core/rover.log"
 
 # pin variables BCM
 # direction control
 RPWM1 = 17  # right
 LPWM1 = 18  # left
 # forward/backward control
-RPWM2 = 22  # forward
-LPWM2 = 23  # backward
+#RPWM2 = 22  # forward
+#LPWM2 = 23  # backward
 battery_pin = 4
 fecho_pin = 24
 ftrig_pin = 25
@@ -448,8 +502,8 @@ deltaX = 0.0
 deltaY = 0.0
 lastdeltaX = 0.0
 lastdeltaY = 0.0
-maxdeltaX = 100.0
-maxdeltaY = 200.0
+maxdeltaX = 200.0
+maxdeltaY = 100.0
 speedcontrol = 0
 speedmodifer = 0.6
 
@@ -463,6 +517,11 @@ lastfultrasound = time.time()
 lastbultrasound = time.time()
 stopdistance = 15
 ultrasoundinterval = 10
+
+# ESC variables
+maxPWM = 2000
+minPWM = 1000
+midPWM = 1500
 
 # battery variables & ADC ADS1115 setup
 adc = Adafruit_ADS1x15.ADS1115()
@@ -498,15 +557,23 @@ logoutput("loaded variables")
 getPublicIP()
 getPrivateIP()
 
+
 # setup sensor
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(battery_pin, GPIO.IN)
-GPIO.setup(ftrig_pin, GPIO.OUT)
-GPIO.setup(fecho_pin, GPIO.IN)
+#GPIO.setup(battery_pin, GPIO.IN)
+#GPIO.setup(ftrig_pin, GPIO.OUT)
+#GPIO.setup(fecho_pin, GPIO.IN)
 #GPIO.setup(btrig_pin, GPIO.OUT)
 #GPIO.setup(becho_pin, GPIO.IN)
-GPIO.setup(light_pin, GPIO.OUT, initial=0 )
+#GPIO.setup(light_pin, GPIO.OUT, initial=0 )
+
+# set up ESC
+if setupESC() == False:
+  logoutput("failed to initialize ESC")
+  exit()
+
 logoutput("initialized sensors/outputs")
+logoutput("rover is ready")
 
 while True:  
   currenttime = time.time()
@@ -514,10 +581,10 @@ while True:
 
   # check battery sensor
   if (currenttime - lastbatterycheck >= batterycheckinterval):
-    checkbattery(ADCchannel, GAIN)
+    #checkbattery(ADCchannel, GAIN)
     getPublicIP()
     getPrivateIP()
 
   #checkbultrasound(btrig_pin, becho_pin)
 
-  checkfultrasound(ftrig_pin, fecho_pin, 0)
+  #checkfultrasound(ftrig_pin, fecho_pin, 0)
